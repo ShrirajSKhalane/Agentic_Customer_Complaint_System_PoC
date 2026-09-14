@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+class-diagram.png
+class-diagram.svg
+CODE_WALKTHROUGH.md
+docs/
+event_driven_agentic_customer_complaint_poc.md

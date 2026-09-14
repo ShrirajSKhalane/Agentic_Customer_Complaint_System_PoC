@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Customer complaints</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, system-ui, sans-serif; color: #1b2430; background: #f3f5f8; }
+    body { margin: 0; }
+    header { background: #10233f; color: white; padding: 22px 28px; }
+    header h1 { margin: 0 0 4px; font-size: 1.35rem; font-weight: 650; }
+    header p { margin: 0; color: #c5d0de; font-size: 0.95rem; }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px 28px 48px; }
+    .tabs { display: flex; gap: 8px; margin: 0 0 22px; }
+    .tabs button, button { border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; font-weight: 650; }
+    .tabs button { background: #e4eaf2; color: #1b2430; }
+    .tabs button.active, button.primary { color: white; background: #1d4ed8; }
+    button { background: #e4eaf2; }
+    section { display: none; } section.active { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+    .card { background: white; border: 1px solid #d7dee8; border-radius: 12px; padding: 20px; }
+    .card h2 { margin-top: 0; }
+    .muted { color: #5c6b7b; margin-top: 0; }
+    label { display: block; margin: 12px 0 5px; font-weight: 650; }
+    input, select, textarea { box-sizing: border-box; width: 100%; border: 1px solid #bcc8d7; border-radius: 7px; padding: 10px; font: inherit; }
+    textarea { min-height: 120px; resize: vertical; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 0; }
+    .success { background: #e8f6ee; border: 1px solid #9ad0b1; padding: 12px; border-radius: 8px; margin-bottom: 14px; }
+    .trace-row { border-left: 4px solid #1d4ed8; padding: 8px 12px; margin: 8px 0; background: #f7f9fc; }
+    .trace-row small { color: #687688; }
+    .queue-item { border: 1px solid #d7dee8; border-radius: 8px; padding: 12px; margin: 10px 0; }
+    .empty { color: #7a8796; }
+    .notification { border-left: 4px solid #217a4a; background: #eefaf3; padding: 12px; margin: 8px 0; }
+    .meta { color: #5c6b7b; margin: 6px 0 10px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Customer complaints</h1>
+    <p>Lodge a complaint or work cases that need a human decision.</p>
+  </header>
+  <main>
+    <nav class="tabs">
+      <button class="active" data-tab="customer">New complaint</button>
+      <button data-tab="review">Review</button>
+      <button data-tab="journey">Case history</button>
+    </nav>
+
+    <section id="customer" class="active">
+      <div class="card">
+        {% if complaint_id %}
+        <div class="success">
+          Complaint registered. Reference: <strong id="accepted-id">{{ complaint_id }}</strong>.
+          Open Case history to follow progress.
+        </div>
+        {% endif %}
+        <h2>New complaint</h2>
+        <p class="muted">Select the customer and describe the problem in their words.</p>
+        <form method="post" action="/complaints">
+          <label for="customerId">Customer</label>
+          <select id="customerId" name="customerId" required>
+            <option value="" selected disabled>Select a customer</option>
+            {% for customer in customers %}
+            <option value="{{ customer.customerId }}">{{ customer.name }}</option>
+            {% endfor %}
+          </select>
+          <label for="message">Complaint</label>
+          <textarea id="message" name="message" required
+            placeholder="Describe what happened. Include the amount or merchant if you know them."></textarea>
+          <button class="primary" type="submit">Submit complaint</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="review">
+      <div class="grid">
+        <div class="card">
+          <h2>Needs information</h2>
+          <p class="muted">The investigation cannot continue until a missing detail is supplied.</p>
+          <div id="facts"><span class="empty">No cases waiting.</span></div>
+        </div>
+        <div class="card">
+          <h2>Needs authorization</h2>
+          <p class="muted">A refund has been recommended, but a reviewer must approve or decline it.</p>
+          <div id="authorizations"><span class="empty">No cases waiting.</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="journey">
+      <div class="grid">
+        <div class="card">
+          <h2>Case history</h2>
+          <label for="trace-id">Complaint reference</label>
+          <input id="trace-id" placeholder="CMP-…" value="{{ complaint_id or '' }}">
+          <div class="actions">
+            <button class="primary" type="button" onclick="loadTrace()">Load</button>
+          </div>
+          <div id="trace"><span class="empty">Enter a complaint reference.</span></div>
+        </div>
+        <div class="card">
+          <h2>Customer messages</h2>
+          <div id="notifications"><span class="empty">No messages yet.</span></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const tabs = document.querySelectorAll('.tabs button');
+    tabs.forEach(button => button.onclick = () => {
+      tabs.forEach(item => item.classList.remove('active'));
+      document.querySelectorAll('section').forEach(item => item.classList.remove('active'));
+      button.classList.add('active');
+      document.getElementById(button.dataset.tab).classList.add('active');
+      if (button.dataset.tab === 'review') loadQueues();
+      if (button.dataset.tab === 'journey') loadTrace();
+    });
+    function money(amount) {
+      if (amount === null || amount === undefined || amount === '') return '';
+      return Number(amount).toLocaleString('en-IN', {
+        style: 'currency', currency: 'INR', maximumFractionDigits: 0,
+      });
+    }
+    async function loadTrace() {
+      const id = document.getElementById('trace-id').value.trim();
+      if (!id) return;
+      const data = await fetch(`/api/complaints/${encodeURIComponent(id)}/trace`).then(r => r.json());
+      document.getElementById('trace').innerHTML = data.trace.length
+        ? data.trace.map(row => `<div class="trace-row"><strong>${row.agent}</strong> · ${row.action}<br><small>${row.timestamp} · ${row.status}</small><pre>${JSON.stringify(row.detail, null, 2)}</pre></div>`).join('')
+        : '<span class="empty">No history yet.</span>';
+      document.getElementById('notifications').innerHTML = data.notifications.length
+        ? data.notifications.map(row => `<div class="notification">${row.message}</div>`).join('')
+        : '<span class="empty">No messages yet.</span>';
+    }
+    function chargeLabel(charge) {
+      const when = String(charge.transactionTime || '').replace('T', ' ').slice(0, 16);
+      return [money(charge.amount), charge.merchant, when].filter(Boolean).join(' · ');
+    }
+    function factAnswerField(item) {
+      const options = (item.candidates || [])
+        .map(charge => `<option value="${charge.transactionId}">${chargeLabel(charge)}</option>`)
+        .join('');
+      return options
+        ? `<select id="fact-${item.complaintId}">${options}</select>`
+        : `<input id="fact-${item.complaintId}" placeholder="Transaction reference">`;
+    }
+    function customerLabel(item) {
+      return item.customerName || item.customerId || '';
+    }
+    function proposedSummary(action) {
+      if (!action) return '';
+      const parts = [];
+      if (action.action === 'REFUND') parts.push('Recommended: refund');
+      else if (action.action) parts.push(action.action);
+      if (action.amount !== undefined && action.amount !== null) parts.push(money(action.amount));
+      if (action.merchant) parts.push(action.merchant);
+      if (action.transactionId) parts.push(action.transactionId);
+      return parts.join(' · ');
+    }
+    async function loadQueues() {
+      const data = await fetch('/api/review-queues').then(r => r.json());
+      facts.innerHTML = data.needsInformation.length ? data.needsInformation.map(item =>
+        `<div class="queue-item"><strong>${item.complaintId}</strong><p class="meta">${customerLabel(item)}</p><p>${item.prompt}</p>${factAnswerField(item)}<div class="actions"><button class="primary" onclick="answerFact('${item.complaintId}')">Submit answer</button></div></div>`
+      ).join('') : '<span class="empty">No cases waiting.</span>';
+      authorizations.innerHTML = data.authorization.length ? data.authorization.map(item =>
+        `<div class="queue-item"><strong>${item.complaintId}</strong><p class="meta">${customerLabel(item)}</p><p>${item.reason}</p><p class="meta">${proposedSummary(item.proposedAction)}</p><input id="note-${item.complaintId}" placeholder="Reviewer note"><div class="actions"><button class="primary" onclick="decide('${item.complaintId}','APPROVE')">Approve</button><button onclick="decide('${item.complaintId}','REJECT')">Reject</button><button onclick="decide('${item.complaintId}','REQUEST_MORE_INFORMATION')">Request more information</button></div></div>`
+      ).join('') : '<span class="empty">No cases waiting.</span>';
+    }
+    async function answerFact(id) {
+      const answer = document.getElementById(`fact-${id}`).value;
+      await fetch(`/api/facts/${id}/answer`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({answer})});
+      loadQueues();
+    }
+    async function decide(id, decision) {
+      const note = document.getElementById(`note-${id}`).value;
+      await fetch(`/api/reviews/${id}/decision`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({decision,note})});
+      loadQueues();
+    }
+    if (document.getElementById('trace-id').value) setInterval(loadTrace, 2000);
+  </script>
+</body>
+</html>
